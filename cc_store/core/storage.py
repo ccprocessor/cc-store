@@ -198,7 +198,7 @@ class StorageBackend:
         
         # Update metadata fields
         for file in file_metadata:
-            metadata.total_records += file.num_records
+            metadata.total_records += file.records_count
             metadata.total_size_bytes += file.file_size_bytes
         
         metadata.total_files += len(file_metadata)
@@ -248,8 +248,8 @@ class StorageBackend:
             "parquet.bloom.filter.enabled#url": "true",
             "parquet.bloom.filter.expected.ndv#url": "100000",
             "parquet.enable.dictionary": "true",
-            "parquet.page.size": "1m",
-            "parquet.block.size": "64m"
+            "parquet.page.size": "1048576",  # 1m = 1048576 bytes
+            "parquet.block.size": "67108864"  # 64m = 67108864 bytes
         }
         
         # Group by domain and date for partitioning
@@ -304,13 +304,28 @@ class StorageBackend:
                             # and the average record size from our earlier calculation
                             estimated_records = max(1, file_size // 1024)
                             
+                            # Extract part ID from filename (typically part-00000.parquet)
+                            part_id = 0
+                            if "-" in file:
+                                try:
+                                    part_id = int(file.split("-")[1].split(".")[0])
+                                except (IndexError, ValueError):
+                                    part_id = 0
+                            
+                            # Use current time for timestamps
+                            current_time = datetime.datetime.now()
+                            
                             file_metadata = FileMetadata(
-                                domain=domain,
+                                domain_id=domain,
                                 date=date,
+                                part_id=part_id,
                                 file_path=file_path,
                                 file_size_bytes=file_size,
-                                num_records=estimated_records,
-                                created_at=datetime.datetime.now().isoformat()
+                                records_count=estimated_records,
+                                min_timestamp=current_time,
+                                max_timestamp=current_time,
+                                created_at=current_time,
+                                checksum="dummy-checksum-" + str(hash(file_path))
                             )
                             
                             file_metadata_list.append(file_metadata)
@@ -318,7 +333,7 @@ class StorageBackend:
         # Update domain metadata for all affected domains
         for domain_row in domains:
             domain = domain_row["domain"]
-            domain_files = [meta for meta in file_metadata_list if meta.domain == domain]
+            domain_files = [meta for meta in file_metadata_list if meta.domain_id == domain]
             self._update_metadata(domain, domain_files)
         
         return file_metadata_list

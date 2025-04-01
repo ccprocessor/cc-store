@@ -4,6 +4,7 @@ Data models for CC-Store.
 
 import datetime
 from typing import Dict, List, Optional, Union, Any
+from dataclasses import dataclass, field
 
 
 class CCDocument:
@@ -95,77 +96,61 @@ class DomainMetadata:
     
     def __init__(
         self,
-        domain_id: str,
-        bucket_id: str,
-        total_files: int,
-        total_records: int,
-        total_size_bytes: int,
-        min_date: str,
-        max_date: str,
-        date_count: int,
-        last_updated: datetime.datetime,
+        domain: str,
+        total_files: int = 0,
+        total_records: int = 0,
+        total_size_bytes: int = 0,
+        min_date: Optional[str] = None,
+        max_date: Optional[str] = None,
+        date_count: int = 0,
         stats: Dict = None
     ):
         """
         Initialize a DomainMetadata instance.
         
         Args:
-            domain_id: Domain ID (domain name)
-            bucket_id: Bucket ID
+            domain: Domain name
             total_files: Total number of files
             total_records: Total number of records
             total_size_bytes: Total size in bytes
             min_date: Minimum date (YYYYMMDD)
             max_date: Maximum date (YYYYMMDD)
             date_count: Number of distinct dates
-            last_updated: Last updated timestamp
             stats: Additional statistics (optional)
         """
-        self.domain_id = domain_id
-        self.bucket_id = bucket_id
+        self.domain = domain
         self.total_files = total_files
         self.total_records = total_records
         self.total_size_bytes = total_size_bytes
         self.min_date = min_date
         self.max_date = max_date
         self.date_count = date_count
-        self.last_updated = last_updated
         self.stats = stats or {}
     
     def to_dict(self) -> Dict:
         """Convert to dictionary."""
         return {
-            "domain_id": self.domain_id,
-            "bucket_id": self.bucket_id,
+            "domain": self.domain,
             "total_files": self.total_files,
             "total_records": self.total_records,
             "total_size_bytes": self.total_size_bytes,
             "min_date": self.min_date,
             "max_date": self.max_date,
             "date_count": self.date_count,
-            "last_updated": self.last_updated.isoformat(),
             "stats": self.stats
         }
     
     @classmethod
     def from_dict(cls, data: Dict) -> "DomainMetadata":
         """Create from dictionary."""
-        # Parse last_updated from string to datetime
-        if isinstance(data["last_updated"], str):
-            last_updated = datetime.datetime.fromisoformat(data["last_updated"])
-        else:
-            last_updated = data["last_updated"]
-            
         return cls(
-            domain_id=data["domain_id"],
-            bucket_id=data["bucket_id"],
+            domain=data["domain"],
             total_files=data["total_files"],
             total_records=data["total_records"],
             total_size_bytes=data["total_size_bytes"],
             min_date=data["min_date"],
             max_date=data["max_date"],
             date_count=data["date_count"],
-            last_updated=last_updated,
             stats=data.get("stats", {})
         )
 
@@ -280,24 +265,20 @@ class HTMLContentMetadata:
     """
     Metadata for stored HTML content.
     """
+    domain: str
+    date: str
     content_hash: str
-    compressed_size: int
-    original_size: int
-    first_seen_date: str  # YYYYMMDD format
-    last_seen_date: str  # YYYYMMDD format
-    reference_count: int
-    compression_method: str
+    size_bytes: int
+    content_type: str = "text/html"  # 默认值
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary representation."""
         return {
+            "domain": self.domain,
+            "date": self.date,
             "content_hash": self.content_hash,
-            "compressed_size": self.compressed_size,
-            "original_size": self.original_size,
-            "first_seen_date": self.first_seen_date,
-            "last_seen_date": self.last_seen_date,
-            "reference_count": self.reference_count,
-            "compression_method": self.compression_method
+            "size_bytes": self.size_bytes,
+            "content_type": self.content_type
         }
     
     @classmethod
