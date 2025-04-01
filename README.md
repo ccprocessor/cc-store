@@ -1,14 +1,15 @@
-# CC-Store
+# CC-Store: Efficient Domain-Centric Web Data Storage
 
-CC-Store (Common Crawl Store) is a high-performance storage system designed for efficiently managing and querying billions of Common Crawl web page records. The system is optimized for domain-level access patterns.
+CC-Store is a domain-centric storage system designed for efficiently storing and accessing web data from Common Crawl or similar web archives. It offers optimized data management with domain-level partitioning for faster queries and reduced storage overhead.
 
 ## Features
 
-- Domain-centric storage organization for efficient querying
-- Spark integration for scalable data processing
-- Support for incremental data updates
-- Advanced compression and optimization for space efficiency
-- High-performance query capabilities
+- **Domain-Centric Storage**: Organizes data by domains for efficient access patterns
+- **Optimized Storage Format**: Uses Parquet files with compression for space efficiency
+- **Flexible Query API**: Filter by domain, date range, and other criteria
+- **Scalability**: Built on Apache Spark for distributed processing
+- **Metadata Management**: Track statistics and availability of domain data
+- **Multiple Metadata Backends**: Support for file system, Redis, and RocksDB
 
 ## Project Structure
 
@@ -27,10 +28,18 @@ cc-store/
 ## Installation
 
 ```bash
-# Install from source
-git clone https://github.com/username/cc-store.git
+# Clone the repository
+git clone https://github.com/yourusername/cc-store.git
 cd cc-store
-pip install -e .
+
+# Install dependencies
+pip install -r requirements.txt
+
+# For Redis metadata backend
+pip install redis
+
+# For RocksDB metadata backend
+pip install python-rocksdb
 ```
 
 ## Quick Start
@@ -52,6 +61,75 @@ store.write_documents(new_data_df)
 domain_df = store.read_domain("example.com")
 domain_df.show()
 ```
+
+## Metadata Backend Options
+
+CC-Store supports multiple metadata backend options to suit different deployment scenarios:
+
+### 1. File System Backend (Default)
+
+```python
+# Use file system metadata backend (default)
+cc_store = CCStore(
+    storage_path="/path/to/storage",
+    metadata_backend="file"
+)
+```
+
+The file system backend stores metadata as JSON files alongside the data. This is suitable for:
+- Local development
+- Simple deployments
+- Environments where no database infrastructure is available
+
+### 2. Redis Backend
+
+```python
+# Use Redis metadata backend
+cc_store = CCStore(
+    storage_path="/path/to/storage",
+    metadata_backend="redis",
+    metadata_config={
+        "host": "localhost",
+        "port": 6379,
+        "db": 0,
+        "password": "optional-password"
+    }
+)
+```
+
+The Redis backend offers:
+- Fast in-memory metadata operations
+- Improved performance for metadata-heavy workloads
+- Better scalability with millions of domains
+- Easy monitoring and management
+
+### 3. RocksDB Backend
+
+```python
+# Use RocksDB metadata backend
+cc_store = CCStore(
+    storage_path="/path/to/storage",
+    metadata_backend="rocksdb",
+    metadata_config={
+        "db_path": "/path/to/rocksdb",
+        "max_open_files": 300
+    }
+)
+```
+
+The RocksDB backend provides:
+- Persistent key-value storage
+- High performance for large metadata sets
+- Low overhead compared to full database systems
+- Good for embedded or single-machine deployments
+
+## Examples
+
+Check the `examples/` directory for more detailed usage examples:
+
+- `examples/basic_usage.py`: Basic operations with CC-Store
+- `examples/domain_analysis.py`: Analyze domain structure and statistics
+- `examples/metadata_example.py`: Demonstrates using different metadata backends
 
 ## Documentation
 

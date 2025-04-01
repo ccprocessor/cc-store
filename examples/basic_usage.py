@@ -115,20 +115,24 @@ def main():
         # Write documents to the store
         print("\nWriting documents to CCStore...")
         metadata = cc_store.write_documents(df)
-        print(f"Wrote {len(metadata)} files to storage")
-        
+        print(f"Wrote data for {len(metadata)} domains")
+        for domain, files in metadata.items():
+            print(f"  Domain {domain}: {len(files)} files")
+
         # Get list of domains
-        domains = cc_store.get_domains()
+        domains = cc_store.list_domains()
         print(f"\nDomains in the store: {domains}")
         
         # Get domain metadata
         for domain in domains:
-            metadata = cc_store.get_domain_metadata(domain)
-            if metadata:
-                print(f"\nMetadata for domain '{domain}':")
-                print(f"  Total records: {metadata.total_records}")
-                print(f"  Total files: {metadata.total_files}")
-                print(f"  Date range: {metadata.min_date} - {metadata.max_date}")
+            # Get domain statistics
+            stats = cc_store.get_domain_statistics(domain)
+            if stats:
+                print(f"\nStatistics for domain '{domain}':")
+                print(f"  Total records: {stats['total_records']}")
+                print(f"  Total files: {stats['total_files']}")
+                date_range = stats['date_range']
+                print(f"  Date range: {date_range['min_date']} - {date_range['max_date']}")
         
         # Read documents for a specific domain
         domain = "example.com"
@@ -136,24 +140,10 @@ def main():
         domain_df = cc_store.read_domain(domain)
         domain_df.show(truncate=False)
         
-        # Read documents without HTML content (for efficiency)
-        print(f"\nReading documents without HTML content for domain '{domain}':")
-        no_html_df = cc_store.read_domain(domain, with_html=False)
-        print(f"Columns: {no_html_df.columns}")
-        no_html_df.show(truncate=False)
-        
         # Read documents for a specific date range
         print(f"\nReading documents for date range '20230101' to '20230101':")
         date_df = cc_store.read_domain(domain, start_date="20230101", end_date="20230101")
         date_df.show(truncate=False)
-        
-        # Read documents with filters
-        print(f"\nReading documents with status=200:")
-        filtered_df = cc_store.read_domain(
-            domain, 
-            filters=[F.col("status") == 200]
-        )
-        filtered_df.show(truncate=False)
         
         # Read documents with limit
         print(f"\nReading limited number of documents (limit=2):")
@@ -162,11 +152,6 @@ def main():
             limit=2
         )
         limited_df.show(truncate=False)
-        
-        # Search for content in HTML
-        print(f"\nSearching for 'Example 1' in HTML content:")
-        search_df = cc_store.search_content(domain, "Example 1")
-        search_df.show(truncate=False)
         
         # Show storage directory structure
         print("\nStorage directory structure:")
