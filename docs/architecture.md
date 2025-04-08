@@ -7,10 +7,9 @@ CC-Store is a high-performance storage system designed for efficiently managing 
 CC-Store is built around several key design principles:
 
 1. **Domain-centric storage organization** for efficient querying
-2. **Optimized HTML storage** with high compression
-3. **Multi-level metadata management**
-4. **Support for incremental data updates**
-5. **Apache Spark optimization**
+2. **Multi-level metadata management**
+3. **Support for incremental data updates**
+4. **Apache Spark optimization**
 
 ## System Architecture
 
@@ -76,8 +75,7 @@ The system is organized into several logical layers:
 1. User requests data for a specific domain through `CCStore` API
 2. System queries `MetadataManager` to locate the relevant files
 3. `StorageBackend` reads appropriate Parquet files based on metadata information
-4. HTML content can be optionally included or excluded to optimize query performance
-5. Results are returned to the user as a Spark DataFrame
+4. Results are returned to the user as a Spark DataFrame
 
 ### Write Flow
 
@@ -141,12 +139,7 @@ CC-Store employs several techniques to optimize storage:
    - Dictionary encoding for repeated values
    - Bloom filters for key columns like URLs
 
-2. **HTML Column Optimization**
-   - Special handling for large HTML content
-   - High compression ratio using zstd or other algorithms
-   - Options to exclude HTML content from queries when not needed
-
-3. **Query Optimization**
+2. **Query Optimization**
    - Partition pruning to read only relevant files
    - Column projection to read only required columns
    - Predicate pushdown for filtering at storage level
@@ -180,7 +173,6 @@ Tracks information about each Parquet file:
 ### Reading Performance
 
 - Column-based storage allows selective reading of required fields
-- HTML content can be excluded from queries when not needed
 - Predefined partition structure enables efficient date range and domain queries
 - Bloom filters accelerate point lookups
 

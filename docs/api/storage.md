@@ -105,19 +105,16 @@ Write data to storage.
 ```python
 stats = storage.write_data(
     dataframe=df,
-    overwrite=False,
-    partition_size_hint=128
+    overwrite=False
 )
 ```
 
-##### Parameters
-
-- `dataframe` (SparkDataFrame): Spark DataFrame containing the data to write
+Parameters:
+- `dataframe` (DataFrame): Spark DataFrame with data to write
 - `overwrite` (bool, optional): Whether to overwrite existing data, defaults to False
 - `partition_size_hint` (int, optional): Target size for partitions in MB
 
-##### Returns
-
+Returns:
 - `dict`: Dictionary with statistics about the write operation
 
 #### append_data
@@ -142,31 +139,28 @@ stats = storage.append_data(
 
 ### ParquetStorageBackend
 
-Concrete implementation of StorageBackend using Parquet files.
+Direct access to the storage backend. This is useful for advanced use cases.
 
 ```python
 from cc_store.storage import ParquetStorageBackend
 ```
 
-#### Initialization
+### write_data
 
 ```python
-storage = ParquetStorageBackend(
-    base_path="s3://your-bucket/cc-data/data",
-    spark=spark,
-    max_file_size_gb=2.0,
-    metadata_manager=metadata_manager,
-    html_content_store=html_content_store
+stats = storage.write_data(
+    dataframe=df,
+    overwrite=False
 )
 ```
 
-##### Parameters
+Parameters:
+- `dataframe` (DataFrame): Spark DataFrame with data to write
+- `overwrite` (bool, optional): Whether to overwrite existing data, defaults to False
+- `partition_size_hint` (int, optional): Target size for partitions in MB
 
-- `base_path` (str): Base path for storing data files
-- `spark` (SparkSession, optional): SparkSession instance
-- `max_file_size_gb` (float, optional): Maximum size of a single file in GB, defaults to 2.0
-- `metadata_manager` (MetadataManager, optional): Metadata manager implementation
-- `html_content_store` (HTMLContentStore, optional): HTML content store implementation
+Returns:
+- `dict`: Dictionary with statistics about the write operation
 
 ## Document Schema
 
@@ -367,16 +361,10 @@ stats = store.write_data(optimized_df, deduplication=True)
 ```python
 from cc_store.storage import ParquetStorageBackend
 from cc_store.storage import HBaseMetadataManager
-from cc_store.storage import ParquetHTMLContentStore
 
 # Initialize components
 metadata_manager = HBaseMetadataManager(
     connection_string="hbase-host:2181",
-    spark=spark
-)
-
-html_store = ParquetHTMLContentStore(
-    base_path="s3://your-bucket/cc-data/html",
     spark=spark
 )
 
@@ -385,8 +373,7 @@ storage = ParquetStorageBackend(
     base_path="s3://your-bucket/cc-data/data",
     spark=spark,
     max_file_size_gb=2.0,
-    metadata_manager=metadata_manager,
-    html_content_store=html_store
+    metadata_manager=metadata_manager
 )
 
 # Use storage backend directly

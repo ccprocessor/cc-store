@@ -25,31 +25,36 @@ class ParquetStorageBackend(StorageBackend):
     """
     
     def __init__(
-        self,
-        base_path: str,
-        spark: Optional[SparkSession] = None,
-        max_file_size_gb: float = 2.0,
-        metadata_manager=None,
-        html_content_store=None
+        self, 
+        storage_path: str,
+        spark: SparkSession,
+        target_part_size_bytes: int = 128 * 1024 * 1024,  # 128MB
+        min_records_per_part: int = 1000
     ):
         """
         Initialize the Parquet storage backend.
         
         Args:
-            base_path: Base path for storing data files
-            spark: Optional SparkSession instance
-            max_file_size_gb: Maximum size of a single file in GB
-            metadata_manager: Metadata manager implementation
-            html_content_store: HTML content store implementation
+            storage_path: Base path for storing data
+            spark: SparkSession to use
+            target_part_size_bytes: Target size for each part file in bytes
+            min_records_per_part: Minimum number of records per part file
         """
-        self.base_path = base_path
-        self.spark = spark or SparkSession.builder.getOrCreate()
-        self.max_file_size_gb = max_file_size_gb
-        self.metadata_manager = metadata_manager
-        self.html_content_store = html_content_store
+        self.storage_path = storage_path
+        self.spark = spark
+        self.target_part_size_bytes = target_part_size_bytes
+        self.min_records_per_part = min_records_per_part
         
-        # Schema for CommonCrawl documents
-        self.schema = self._create_schema()
+        # Create directories
+        self.data_path = os.path.join(storage_path, "data")
+        self.metadata_path = os.path.join(storage_path, "metadata")
+        
+        # Create required directories
+        os.makedirs(self.data_path, exist_ok=True)
+        os.makedirs(self.metadata_path, exist_ok=True)
+        
+        # Initialize metadata manager
+        self.metadata_manager = FileSystemMetadataManager(self.metadata_path, spark)
     
     def _create_schema(self) -> StructType:
         """Create the schema for CommonCrawl documents."""
@@ -176,79 +181,59 @@ class ParquetStorageBackend(StorageBackend):
     
     def write_data(
         self,
-        dataframe: SparkDataFrame,
+        dataframe: DataFrame,
         overwrite: bool = False,
-        partition_size_hint: Optional[int] = None
+        partition_size_hint: Optional[int] = None,
+        deduplicate: bool = True
     ) -> Dict[str, Any]:
         """
         Write data to storage.
         
         Args:
-            dataframe: Spark DataFrame containing the data to write
+            dataframe: DataFrame to write
             overwrite: Whether to overwrite existing data
-            partition_size_hint: Target size for partitions in MB
+            partition_size_hint: Hint for partition size in MB
+            deduplicate: Whether to deduplicate HTML content
             
         Returns:
-            Dictionary with statistics about the write operation
+            Dictionary with statistics about the written data
         """
-        # Group data by domain and date
-        grouped = dataframe.groupBy("domain", F.date_format(F.from_unixtime("date"), "yyyyMMdd").alias("date_str"))
+        # Check required columns
+        required_columns = ['domain', 'url']
+        for column in required_columns:
+            if column not in dataframe.columns:
+                raise ValueError(f"DataFrame must have a '{column}' column")
         
-        # Get count by domain and date
-        counts_by_domain_date = grouped.count().collect()
+        # Calculate the number of records per partition
+        total_records = dataframe.count()
+        records_per_part = self._calculate_records_per_part(
+            dataframe, 
+            partition_size_hint
+        )
         
+        # Repartition the DataFrame
+        num_partitions = max(1, total_records // records_per_part)
+        repartitioned_df = dataframe.repartition(num_partitions)
+        
+        # Process each domain's data
+        domain_dfs = self._process_domains(repartitioned_df)
+        
+        # Write each domain's data
         stats = {
-            "domains_processed": 0,
-            "total_records": 0,
-            "total_files": 0
+            "total_records": total_records,
+            "domains_processed": len(domain_dfs),
+            "write_stats": {}
         }
         
-        for row in counts_by_domain_date:
-            domain = row["domain"]
-            date_str = row["date_str"]
-            count = row["count"]
-            
-            # Filter dataframe for this domain and date
-            domain_date_df = dataframe.filter(
-                (F.col("domain") == domain) & 
-                (F.date_format(F.from_unixtime("date"), "yyyyMMdd") == date_str)
+        for domain, domain_df in domain_dfs.items():
+            # Write data for this domain
+            domain_stats = self._write_domain_data(
+                domain, 
+                domain_df,
+                overwrite=overwrite
             )
             
-            # Calculate number of parts based on record count and max file size
-            # This is a simplistic approach; a more accurate approach would estimate actual size
-            avg_record_size_kb = 100  # Estimate average record size (adjusted based on your data)
-            max_records_per_part = int((self.max_file_size_gb * 1024 * 1024) / avg_record_size_kb)
-            parts_count = max(1, math.ceil(count / max_records_per_part))
-            
-            # Store files with appropriate naming
-            domain_path = self._get_domain_path(domain)
-            files_info = []
-            
-            for part in range(parts_count):
-                part_df = domain_date_df.limit(max_records_per_part) if parts_count > 1 else domain_date_df
-                
-                if parts_count > 1:
-                    # For multiple parts, subtract processed records
-                    domain_date_df = domain_date_df.subtract(part_df)
-                
-                # Generate file path
-                file_name = f"data_{date_str}_part{part}.parquet" if parts_count > 1 else f"data_{date_str}.parquet"
-                file_path = os.path.join(domain_path, file_name)
-                
-                # Write the file
-                part_df.write.parquet(file_path, mode="overwrite" if overwrite else "error")
-                
-                # Collect file metadata
-                file_metadata = self._create_file_metadata(domain, date_str, part, file_path, part_df)
-                files_info.append(file_metadata)
-            
-            # Update metadata if available
-            if self.metadata_manager:
-                self.metadata_manager.update_metadata_after_write(domain, date_str, files_info)
-            
-            stats["domains_processed"] += 1
-            stats["total_records"] += count
-            stats["total_files"] += parts_count
+            stats["write_stats"][domain] = domain_stats
         
         return stats
     
@@ -329,5 +314,64 @@ class ParquetStorageBackend(StorageBackend):
         
         if deduplicate and self.html_content_store:
             stats["deduplication_stats"] = dedup_stats
+        
+        return stats 
+
+    def _write_domain_data(
+        self,
+        domain: str,
+        dataframe: DataFrame,
+        overwrite: bool = False
+    ) -> Dict[str, Any]:
+        """
+        Write data for a domain.
+        
+        Args:
+            domain: Domain name
+            dataframe: DataFrame with domain data
+            overwrite: Whether to overwrite existing data
+            
+        Returns:
+            Statistics about written data
+        """
+        # Create domain directory
+        domain_path = self._get_domain_path(domain)
+        os.makedirs(domain_path, exist_ok=True)
+        
+        # Get dates in the dataframe
+        dates = dataframe.select(self._get_date_column()).distinct().collect()
+        
+        stats = {
+            "total_records": 0,
+            "total_files": 0,
+            "dates_processed": len(dates)
+        }
+        
+        for date_row in dates:
+            date_str = date_row[0]
+            
+            # Filter data for this date
+            date_df = dataframe.filter(self._get_date_column() == date_str)
+            
+            # Prepare destination path
+            date_path = os.path.join(domain_path, f"date={date_str}")
+            
+            # Write data
+            date_df.write.mode("overwrite" if overwrite else "error").parquet(date_path)
+            
+            # Update stats
+            record_count = date_df.count()
+            stats["total_records"] += record_count
+            stats["total_files"] += 1
+            
+            # Create file metadata
+            file_info = {
+                "path": date_path,
+                "record_count": record_count,
+                "date": date_str
+            }
+            
+            # Update metadata
+            self._update_metadata(domain, date_str, [file_info])
         
         return stats 

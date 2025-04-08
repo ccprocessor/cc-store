@@ -11,58 +11,11 @@ from pyspark.sql import DataFrame as SparkDataFrame
 
 
 class StorageBackend(ABC):
-    """
-    Abstract base class for storage backends.
-    
-    This class defines the interface for storage implementations that handle
-    reading and writing Common Crawl documents.
-    """
-    
-    @abstractmethod
-    def read_by_domain(
-        self, 
-        domain: str, 
-        date_range: Optional[Tuple[str, str]] = None,
-        fields: Optional[List[str]] = None,
-        limit: Optional[int] = None
-    ) -> SparkDataFrame:
-        """
-        Read data for a specific domain.
-        
-        Args:
-            domain: Domain name to retrieve data for
-            date_range: Optional tuple of (start_date, end_date) in YYYYMMDD format
-            fields: Optional list of fields to include
-            limit: Optional maximum number of records to return
-            
-        Returns:
-            Spark DataFrame containing the requested data
-        """
-        pass
-    
-    @abstractmethod
-    def read_by_domains(
-        self,
-        domains: List[str],
-        date_range: Optional[Tuple[str, str]] = None,
-        fields: Optional[List[str]] = None
-    ) -> SparkDataFrame:
-        """
-        Read data for multiple domains.
-        
-        Args:
-            domains: List of domain names to retrieve data for
-            date_range: Optional tuple of (start_date, end_date) in YYYYMMDD format
-            fields: Optional list of fields to include
-            
-        Returns:
-            Spark DataFrame containing the requested data
-        """
-        pass
+    """Abstract base class for CC-Store storage backends."""
     
     @abstractmethod
     def write_data(
-        self,
+        self, 
         dataframe: SparkDataFrame,
         overwrite: bool = False,
         partition_size_hint: Optional[int] = None
@@ -81,20 +34,78 @@ class StorageBackend(ABC):
         pass
     
     @abstractmethod
-    def append_data(
+    def read_by_domain(
         self,
-        dataframe: SparkDataFrame,
-        deduplicate: bool = True
-    ) -> Dict[str, Any]:
+        domain: str,
+        date_range: Optional[Tuple[str, str]] = None,
+        fields: Optional[List[str]] = None
+    ) -> SparkDataFrame:
         """
-        Append incremental data to storage.
+        Read data for a domain.
         
         Args:
-            dataframe: Spark DataFrame containing the data to append
-            deduplicate: Whether to deduplicate HTML content
+            domain: Domain name to read data for
+            date_range: Optional tuple of (start_date, end_date) in YYYYMMDD format
+            fields: Optional list of fields to include in the result
             
         Returns:
-            Dictionary with statistics about the append operation
+            Spark DataFrame containing the data
+        """
+        pass
+    
+    @abstractmethod
+    def read_by_domains(
+        self,
+        domains: List[str],
+        date_range: Optional[Tuple[str, str]] = None,
+        fields: Optional[List[str]] = None
+    ) -> SparkDataFrame:
+        """
+        Read data for multiple domains.
+        
+        Args:
+            domains: List of domain names to read data for
+            date_range: Optional tuple of (start_date, end_date) in YYYYMMDD format
+            fields: Optional list of fields to include in the result
+            
+        Returns:
+            Spark DataFrame containing the data
+        """
+        pass
+    
+    @abstractmethod
+    def get_domain_metadata(
+        self,
+        domain: str
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Get metadata for a domain.
+        
+        Args:
+            domain: Domain name
+            
+        Returns:
+            Dictionary with domain metadata or None if not found
+        """
+        pass
+    
+    @abstractmethod
+    def list_domains(
+        self,
+        prefix: Optional[str] = None,
+        limit: int = 100,
+        offset: int = 0
+    ) -> List[str]:
+        """
+        List domains in the store.
+        
+        Args:
+            prefix: Optional domain name prefix filter
+            limit: Maximum number of domains to return
+            offset: Offset to start from for pagination
+            
+        Returns:
+            List of domain names
         """
         pass
 
@@ -176,61 +187,24 @@ class MetadataManager(ABC):
         pass
 
 
-class HTMLContentStore(ABC):
+class DomainStateStore(ABC):
     """
-    Abstract base class for HTML content storage with deduplication.
+    Abstract base class for storing domain state data.
     """
     
     @abstractmethod
-    def store_html_content(
+    def store_domain_state(
         self,
-        dataframe: SparkDataFrame,
+        domain: str,
         date: str,
-        method: str = "exact"
-    ) -> Tuple[SparkDataFrame, Dict[str, Any]]:
+        files_info: List[Dict]
+    ) -> None:
         """
-        Store HTML content with deduplication.
+        Store state data for a domain.
         
         Args:
-            dataframe: Spark DataFrame containing documents with HTML content
+            domain: Domain name
             date: Date in YYYYMMDD format
-            method: Deduplication method ('exact', 'simhash', 'minhash')
-            
-        Returns:
-            Tuple of (modified DataFrame with content_hash, statistics dict)
-        """
-        pass
-    
-    @abstractmethod
-    def get_html_content(
-        self,
-        content_hashes: List[str]
-    ) -> Dict[str, str]:
-        """
-        Get HTML content by hash.
-        
-        Args:
-            content_hashes: List of content hash values
-            
-        Returns:
-            Dictionary mapping content hashes to HTML content
-        """
-        pass
-    
-    @abstractmethod
-    def get_deduplication_stats(
-        self,
-        domain: Optional[str] = None,
-        date_range: Optional[Tuple[str, str]] = None
-    ) -> Dict[str, Any]:
-        """
-        Get deduplication statistics.
-        
-        Args:
-            domain: Optional domain filter
-            date_range: Optional date range filter
-            
-        Returns:
-            Dictionary with deduplication statistics
+            files_info: List of dictionaries containing file metadata
         """
         pass 

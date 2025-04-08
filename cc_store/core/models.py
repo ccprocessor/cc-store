@@ -91,226 +91,278 @@ class CCDocument:
         )
 
 
-class DomainMetadata:
-    """Metadata for a domain."""
+@dataclass
+class FileRecord:
+    """
+    Record for a file containing domain data.
     
-    def __init__(
-        self,
-        domain: str,
-        total_files: int = 0,
-        total_records: int = 0,
-        total_size_bytes: int = 0,
-        min_date: Optional[str] = None,
-        max_date: Optional[str] = None,
-        date_count: int = 0,
-        stats: Dict = None
-    ):
+    Attributes:
+        filepath: Path to the file
+        start_offset: Starting offset for domain data in file
+        end_offset: Ending offset for domain data in file
+        record_count: Number of records for this domain in file
+        timestamp: Unix timestamp when the file was written
+        size_bytes: Size of the file in bytes
+    """
+    filepath: str
+    start_offset: int
+    end_offset: int
+    record_count: int
+    timestamp: int
+    size_bytes: int
+    
+    def to_dict(self) -> Dict[str, Any]:
         """
-        Initialize a DomainMetadata instance.
+        Convert to dictionary.
         
-        Args:
-            domain: Domain name
-            total_files: Total number of files
-            total_records: Total number of records
-            total_size_bytes: Total size in bytes
-            min_date: Minimum date (YYYYMMDD)
-            max_date: Maximum date (YYYYMMDD)
-            date_count: Number of distinct dates
-            stats: Additional statistics (optional)
+        Returns:
+            Dictionary representation of this file record
         """
-        self.domain = domain
-        self.total_files = total_files
-        self.total_records = total_records
-        self.total_size_bytes = total_size_bytes
-        self.min_date = min_date
-        self.max_date = max_date
-        self.date_count = date_count
-        self.stats = stats or {}
-    
-    def to_dict(self) -> Dict:
-        """Convert to dictionary."""
         return {
-            "domain": self.domain,
-            "total_files": self.total_files,
-            "total_records": self.total_records,
-            "total_size_bytes": self.total_size_bytes,
-            "min_date": self.min_date,
-            "max_date": self.max_date,
-            "date_count": self.date_count,
-            "stats": self.stats
+            'filepath': self.filepath,
+            'start_offset': self.start_offset,
+            'end_offset': self.end_offset,
+            'record_count': self.record_count,
+            'timestamp': self.timestamp,
+            'size_bytes': self.size_bytes
         }
     
     @classmethod
-    def from_dict(cls, data: Dict) -> "DomainMetadata":
-        """Create from dictionary."""
+    def from_dict(cls, data: Dict[str, Any]) -> 'FileRecord':
+        """
+        Create from dictionary.
+        
+        Args:
+            data: Dictionary to parse
+            
+        Returns:
+            FileRecord instance
+        """
         return cls(
-            domain=data["domain"],
-            total_files=data["total_files"],
-            total_records=data["total_records"],
-            total_size_bytes=data["total_size_bytes"],
-            min_date=data["min_date"],
-            max_date=data["max_date"],
-            date_count=data["date_count"],
-            stats=data.get("stats", {})
+            filepath=data['filepath'],
+            start_offset=data['start_offset'],
+            end_offset=data['end_offset'],
+            record_count=data['record_count'],
+            timestamp=data['timestamp'],
+            size_bytes=data['size_bytes']
         )
 
 
-class FileMetadata:
-    """Metadata for a data file."""
+@dataclass
+class DomainMetadata:
+    """
+    Metadata for a domain across all files and dates.
     
-    def __init__(
-        self,
-        domain_id: str,
-        date: str,
-        part_id: int,
-        file_path: str,
-        file_size_bytes: int,
-        records_count: int,
-        min_timestamp: datetime.datetime,
-        max_timestamp: datetime.datetime,
-        created_at: datetime.datetime,
-        checksum: str,
-        file_format_version: str = "1.0",
-        compression: str = "snappy",
-        statistics: Dict = None
-    ):
-        """
-        Initialize a FileMetadata instance.
-        
-        Args:
-            domain_id: Domain ID (domain name)
-            date: Date string (YYYYMMDD)
-            part_id: Part ID
-            file_path: Path to the file
-            file_size_bytes: File size in bytes
-            records_count: Number of records
-            min_timestamp: Minimum timestamp
-            max_timestamp: Maximum timestamp
-            created_at: Creation timestamp
-            checksum: File checksum
-            file_format_version: File format version (optional)
-            compression: Compression algorithm (optional)
-            statistics: File statistics (optional)
-        """
-        self.domain_id = domain_id
-        self.date = date
-        self.part_id = part_id
-        self.file_path = file_path
-        self.file_size_bytes = file_size_bytes
-        self.records_count = records_count
-        self.min_timestamp = min_timestamp
-        self.max_timestamp = max_timestamp
-        self.created_at = created_at
-        self.checksum = checksum
-        self.file_format_version = file_format_version
-        self.compression = compression
-        self.statistics = statistics or {}
+    This class is designed to efficiently retrieve metadata about a domain,
+    including record counts, time spans, and statistics.
+    
+    Attributes:
+        domain: Domain name
+        domain_hash_id: Numeric hash ID for this domain (0-999)
+        total_records: Total number of records for this domain
+        total_files: Total number of files containing this domain's data
+        total_size_bytes: Total size of all files containing this domain's data
+        min_date: Earliest date with data for this domain
+        max_date: Latest date with data for this domain
+        date_count: Number of unique dates with data for this domain
+        stats: Additional statistics for this domain
+        files: List of file records containing this domain's data
+        count: Count of records for this domain
+    """
+    domain: str
+    domain_hash_id: Optional[int] = None
+    total_records: int = 0
+    total_files: int = 0
+    total_size_bytes: int = 0
+    min_date: Optional[str] = None
+    max_date: Optional[str] = None
+    date_count: int = 0
+    stats: Dict[str, Any] = field(default_factory=dict)
+    files: List[Union[Dict, FileRecord]] = field(default_factory=list)
+    count: int = 0
     
     def to_dict(self) -> Dict:
-        """Convert to dictionary."""
-        return {
-            "domain_id": self.domain_id,
-            "date": self.date,
-            "part_id": self.part_id,
-            "file_path": self.file_path,
-            "file_size_bytes": self.file_size_bytes,
-            "records_count": self.records_count,
-            "min_timestamp": self.min_timestamp.isoformat(),
-            "max_timestamp": self.max_timestamp.isoformat(),
-            "created_at": self.created_at.isoformat(),
-            "checksum": self.checksum,
-            "file_format_version": self.file_format_version,
-            "compression": self.compression,
-            "statistics": self.statistics
+        """
+        Convert to dictionary.
+        
+        Returns:
+            Dictionary representation of this metadata
+        """
+        result = {
+            'domain': self.domain,
+            'total_records': self.total_records,
+            'total_files': self.total_files,
+            'total_size_bytes': self.total_size_bytes,
+            'date_count': self.date_count,
+            'stats': self.stats
         }
+        
+        if self.domain_hash_id is not None:
+            result['domain_hash_id'] = self.domain_hash_id
+            
+        if self.min_date:
+            result['min_date'] = self.min_date
+            
+        if self.max_date:
+            result['max_date'] = self.max_date
+            
+        if self.files:
+            # Convert FileRecord objects to dictionaries
+            files_dicts = []
+            for file in self.files:
+                if isinstance(file, FileRecord):
+                    files_dicts.append(file.to_dict())
+                else:
+                    files_dicts.append(file)
+            result['files'] = files_dicts
+            
+        if self.count > 0:
+            result['count'] = self.count
+            
+        return result
     
     @classmethod
-    def from_dict(cls, data: Dict) -> "FileMetadata":
-        """Create from dictionary."""
-        # Parse timestamps from strings to datetime
-        if isinstance(data["min_timestamp"], str):
-            min_timestamp = datetime.datetime.fromisoformat(data["min_timestamp"])
-        else:
-            min_timestamp = data["min_timestamp"]
+    def from_dict(cls, data: Dict) -> 'DomainMetadata':
+        """
+        Create from dictionary.
+        
+        Args:
+            data: Dictionary to parse
             
-        if isinstance(data["max_timestamp"], str):
-            max_timestamp = datetime.datetime.fromisoformat(data["max_timestamp"])
-        else:
-            max_timestamp = data["max_timestamp"]
+        Returns:
+            DomainMetadata instance
+        """
+        # Convert file dictionaries to FileRecord objects
+        files = []
+        for file_dict in data.get('files', []):
+            try:
+                files.append(FileRecord.from_dict(file_dict))
+            except (KeyError, TypeError):
+                # Fallback to raw dict if conversion fails
+                files.append(file_dict)
+        
+        return cls(
+            domain=data['domain'],
+            domain_hash_id=data.get('domain_hash_id'),
+            total_records=data.get('total_records', 0),
+            total_files=data.get('total_files', 0),
+            total_size_bytes=data.get('total_size_bytes', 0),
+            min_date=data.get('min_date'),
+            max_date=data.get('max_date'),
+            date_count=data.get('date_count', 0),
+            stats=data.get('stats', {}),
+            files=files,
+            count=data.get('count', 0)
+        )
+
+
+@dataclass
+class FileMetadata:
+    """
+    Metadata for a single file in storage.
+    
+    Attributes:
+        domain_id: Domain identifier
+        date: Date string in YYYYMMDD format
+        part_id: Part ID for this file
+        file_path: Path to the file
+        file_size_bytes: Size of the file in bytes
+        records_count: Number of records in the file
+        min_timestamp: Minimum timestamp in the file
+        max_timestamp: Maximum timestamp in the file
+        created_at: When this file was created
+        checksum: Optional checksum of the file
+        start_line: Starting line number for domain data in file
+        end_line: Ending line number for domain data in file
+    """
+    domain_id: str
+    date: str
+    part_id: int
+    file_path: str
+    file_size_bytes: int
+    records_count: int
+    min_timestamp: Optional[datetime.datetime] = None
+    max_timestamp: Optional[datetime.datetime] = None
+    created_at: Optional[datetime.datetime] = None
+    checksum: Optional[str] = None
+    start_line: Optional[int] = None
+    end_line: Optional[int] = None
+    
+    def to_dict(self) -> Dict:
+        """
+        Convert to dictionary.
+        
+        Returns:
+            Dictionary representation of this metadata
+        """
+        result = {
+            'domain_id': self.domain_id,
+            'date': self.date,
+            'part_id': self.part_id,
+            'file_path': self.file_path,
+            'file_size_bytes': self.file_size_bytes,
+            'records_count': self.records_count,
+        }
+        
+        if self.min_timestamp:
+            result['min_timestamp'] = self.min_timestamp.timestamp()
+        
+        if self.max_timestamp:
+            result['max_timestamp'] = self.max_timestamp.timestamp()
             
-        if isinstance(data["created_at"], str):
-            created_at = datetime.datetime.fromisoformat(data["created_at"])
-        else:
-            created_at = data["created_at"]
+        if self.created_at:
+            result['created_at'] = self.created_at.timestamp()
+            
+        if self.checksum:
+            result['checksum'] = self.checksum
+            
+        if self.start_line is not None:
+            result['start_line'] = self.start_line
+            
+        if self.end_line is not None:
+            result['end_line'] = self.end_line
+            
+        return result
+    
+    @classmethod
+    def from_dict(cls, data: Dict) -> 'FileMetadata':
+        """
+        Create from dictionary.
+        
+        Args:
+            data: Dictionary to parse
+            
+        Returns:
+            FileMetadata instance
+        """
+        # Convert timestamp fields to datetime objects
+        created_at = None
+        if 'created_at' in data:
+            created_at = datetime.datetime.fromtimestamp(data['created_at'])
+            
+        min_timestamp = None
+        if 'min_timestamp' in data:
+            min_timestamp = datetime.datetime.fromtimestamp(data['min_timestamp'])
+            
+        max_timestamp = None
+        if 'max_timestamp' in data:
+            max_timestamp = datetime.datetime.fromtimestamp(data['max_timestamp'])
+            
+        # Extract other fields
+        start_line = data.get('start_line')
+        end_line = data.get('end_line')
             
         return cls(
-            domain_id=data["domain_id"],
-            date=data["date"],
-            part_id=data["part_id"],
-            file_path=data["file_path"],
-            file_size_bytes=data["file_size_bytes"],
-            records_count=data["records_count"],
+            domain_id=data['domain_id'],
+            date=data['date'],
+            part_id=data['part_id'],
+            file_path=data['file_path'],
+            file_size_bytes=data['file_size_bytes'],
+            records_count=data['records_count'],
             min_timestamp=min_timestamp,
             max_timestamp=max_timestamp,
             created_at=created_at,
-            checksum=data["checksum"],
-            file_format_version=data.get("file_format_version", "1.0"),
-            compression=data.get("compression", "snappy"),
-            statistics=data.get("statistics", {})
-        )
-
-
-@dataclass
-class HTMLContentMetadata:
-    """
-    Metadata for stored HTML content.
-    """
-    domain: str
-    date: str
-    content_hash: str
-    size_bytes: int
-    content_type: str = "text/html"  # 默认值
-    
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary representation."""
-        return {
-            "domain": self.domain,
-            "date": self.date,
-            "content_hash": self.content_hash,
-            "size_bytes": self.size_bytes,
-            "content_type": self.content_type
-        }
-    
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'HTMLContentMetadata':
-        """Create from dictionary representation."""
-        return cls(**data)
-
-
-@dataclass
-class HTMLReference:
-    """
-    Reference mapping between URLs and HTML content.
-    """
-    domain: str
-    url: str
-    content_hash: str
-    date: str  # YYYYMMDD format
-    version: int
-    metadata: Dict[str, Any] = field(default_factory=dict)
-    
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary representation."""
-        return {
-            "domain": self.domain,
-            "url": self.url,
-            "content_hash": self.content_hash,
-            "date": self.date,
-            "version": self.version,
-            "metadata": self.metadata
-        }
-    
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'HTMLReference':
-        """Create from dictionary representation."""
-        return cls(**data) 
+            checksum=data.get('checksum'),
+            start_line=start_line,
+            end_line=end_line
+        ) 

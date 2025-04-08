@@ -221,65 +221,6 @@ result = optimized_df.groupBy("domain").count()
 result.show()
 ```
 
-### HTML Content Processing
-
-```python
-from cc_store.api import CCStore
-from cc_store.utils import compute_content_hash
-
-# Initialize store
-store = CCStore(
-    storage_path="s3://your-bucket/cc-data",
-    metadata_backend="hbase",
-    metadata_connection="hbase-host:2181"
-)
-
-# Read data for a specific domain
-df = store.get_data_by_domain(
-    domain="example.com",
-    date_range=("20230101", "20230131"),
-    fields=["url", "html"]
-)
-
-# Process HTML content
-from pyspark.sql.functions import udf
-from pyspark.sql.types import StringType
-
-# Register hash function as UDF
-hash_udf = udf(lambda html: compute_content_hash(html, method="sha256"), StringType())
-
-# Add hash column
-df_with_hash = df.withColumn("content_hash", hash_udf(df.html))
-
-# Find duplicate content
-duplicates = df_with_hash.groupBy("content_hash") \
-    .count() \
-    .filter("count > 1") \
-    .orderBy("count", ascending=False)
-
-print(f"Found {duplicates.count()} duplicate content groups")
-
-# Show top duplicates
-top_duplicates = duplicates.limit(5)
-top_duplicates.show()
-
-# Get URLs with duplicate content
-for row in top_duplicates.collect():
-    hash_value = row["content_hash"]
-    count = row["count"]
-    
-    urls = df_with_hash.filter(f"content_hash = '{hash_value}'") \
-        .select("url") \
-        .collect()
-    
-    url_list = [r["url"] for r in urls]
-    print(f"Hash {hash_value} appears {count} times:")
-    for url in url_list[:5]:  # Show first 5 URLs
-        print(f"  - {url}")
-    if len(url_list) > 5:
-        print(f"  - ... and {len(url_list) - 5} more")
-```
-
 ### Performance Optimization
 
 ```python

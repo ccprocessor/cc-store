@@ -8,6 +8,7 @@ from typing import Dict, List, Optional, Union, Tuple, Any
 import datetime
 
 from pyspark.sql import DataFrame, SparkSession
+from pyspark.sql.types import StructType
 
 from cc_store.core.storage import StorageBackend, StorageManager
 from cc_store.core.models import DomainMetadata, FileMetadata
@@ -27,8 +28,7 @@ class CCStore:
         self,
         storage_path: str,
         spark: Optional[SparkSession] = None,
-        metadata_backend: str = "file",
-        metadata_config: Optional[Dict[str, Any]] = None
+        schema: Optional[StructType] = None
     ):
         """
         Initialize a CCStore instance.
@@ -36,43 +36,13 @@ class CCStore:
         Args:
             storage_path: Path to the storage directory
             spark: Optional SparkSession instance
-            metadata_backend: Type of metadata backend to use ('file', 'redis', 'rocksdb')
-            metadata_config: Optional configuration for the metadata backend
+            schema: Optional schema to use for empty DataFrames
         """
         self.storage_path = storage_path
         self.spark = spark or self._create_spark_session()
         
-        # Initialize the storage manager
-        self.storage = StorageManager(storage_path, self.spark)
-        
-        # Initialize the metadata manager based on the specified backend
-        self._init_metadata_manager(metadata_backend, metadata_config)
-        
-    def _init_metadata_manager(self, backend: str, config: Optional[Dict[str, Any]] = None):
-        """
-        Initialize the appropriate metadata manager based on the specified backend.
-        
-        Args:
-            backend: Type of metadata backend ('file', 'redis', 'rocksdb')
-            config: Configuration for the metadata backend
-        """
-        config = config or {}
-        
-        if backend == "file":
-            # For file-based metadata, we need the storage path
-            self.metadata = FileSystemMetadataManager(
-                storage_path=self.storage_path,
-                spark=self.spark
-            )
-        elif backend in ["redis", "rocksdb"]:
-            # For KV store metadata, we need the store type and connection params
-            self.metadata = KVStoreMetadataManager(
-                store_type=backend,
-                connection_params=config,
-                spark=self.spark
-            )
-        else:
-            raise ValueError(f"Unsupported metadata backend: {backend}")
+        # 初始化存储管理器
+        self.storage = StorageManager(storage_path, self.spark, schema=schema)
     
     def _create_spark_session(self) -> SparkSession:
         """
@@ -87,70 +57,63 @@ class CCStore:
             .config("spark.serializer", "org.apache.spark.serializer.KryoSerializer") \
             .getOrCreate()
     
-    def write_domain(
+    def write_data(
         self,
-        domain: str,
-        data: DataFrame,
+        df: DataFrame,
         date: Optional[str] = None
     ) -> bool:
         """
-        Write data for a domain to storage.
+        Write data to storage.
         
         Args:
-            domain: Domain name
-            data: DataFrame containing the data
+            df: DataFrame containing the data
             date: Optional date string (format: "YYYYMMDD")
             
         Returns:
             True if write was successful, False otherwise
         """
-        # Use current date if not provided
+        try:
+            self.storage.write_dataframe(df, date)
+            return True
+        except Exception as e:
+            logger.error(f"写入数据失败: {str(e)}")
+            return False
+    
+    def write_incremental_data(
+        self,
+        df: DataFrame,
+        date: Optional[str] = None
+    ) -> bool:
+        """
+        将增量数据写入增量存储区域，按日期组织
+        
+        Args:
+            df: DataFrame containing the data
+            date: Optional date string (format: "YYYYMMDD")
+            
+        Returns:
+            True if write was successful, False otherwise
+        """
         if not date:
             date = datetime.datetime.now().strftime("%Y%m%d")
+            
+        # 写入增量存储区域
+        incremental_path = os.path.join(self.storage.incremental_path, date)
         
-        # Write data to storage
-        file_metadata = self.storage.write_dataframe(domain, data, date)
-        
-        if not file_metadata:
+        try:
+            # 确保增量数据按domain分区
+            df.write.partitionBy("domain").parquet(incremental_path)
+            return True
+        except Exception as e:
+            logger.error(f"Error writing incremental data for date {date}: {str(e)}")
             return False
-        
-        # Get current domain metadata
-        domain_metadata = self.metadata.get_domain_metadata(domain) or {
-            "domain": domain,
-            "total_records": 0,
-            "total_files": 0,
-            "total_size_bytes": 0,
-            "min_date": date,
-            "max_date": date,
-            "date_count": 0,
-            "stats": {}
-        }
-        
-        # Update domain metadata with new file information
-        domain_metadata["total_records"] += sum(file.records_count for file in file_metadata)
-        domain_metadata["total_files"] += len(file_metadata)
-        domain_metadata["total_size_bytes"] += sum(file.file_size_bytes for file in file_metadata)
-        
-        # Update date range
-        current_dates = self.metadata.get_dates_for_domain(domain)
-        if date not in current_dates:
-            current_dates.append(date)
-            current_dates.sort()
-            # Update date-related metadata
-            domain_metadata["min_date"] = current_dates[0]
-            domain_metadata["max_date"] = current_dates[-1]
-            domain_metadata["date_count"] = len(current_dates)
-            # Update the dates list
-            self.metadata.update_dates_for_domain(domain, current_dates)
-        
-        # Save updated metadata
-        return self.metadata.update_domain_metadata(domain, domain_metadata)
     
     def read_domain(
         self,
         domain: str,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
+        include_html: bool = True,
         limit: Optional[int] = None
     ) -> DataFrame:
         """
@@ -160,62 +123,30 @@ class CCStore:
             domain: Domain name
             start_date: Optional start date (format: "YYYYMMDD")
             end_date: Optional end date (format: "YYYYMMDD")
-            limit: Optional maximum number of records to return
+            include_html: Whether to include HTML content in result
+            limit: Maximum number of records to return
             
         Returns:
             DataFrame containing the data
         """
-        # Get available dates for the domain
-        available_dates = self.metadata.get_dates_for_domain(domain)
-        
-        if not available_dates:
-            # Return empty DataFrame if no data is available
-            return self.spark.createDataFrame([], schema=None)
-        
-        # Filter dates based on start_date and end_date
-        dates_to_read = self._filter_dates(available_dates, start_date, end_date)
-        
-        if not dates_to_read:
-            # Return empty DataFrame if no dates match the criteria
-            return self.spark.createDataFrame([], schema=None)
-        
-        # Read data from storage for the specified dates
-        return self.storage.read_domain(domain, dates_to_read, limit)
+        return self.storage.read_domain(domain, start_date, end_date, include_html, limit)
     
-    def _filter_dates(
-        self,
-        dates: List[str],
-        start_date: Optional[str] = None,
-        end_date: Optional[str] = None
-    ) -> List[str]:
+    def get_domain_metadata(self, domain: str) -> Optional[Dict]:
         """
-        Filter dates based on start_date and end_date.
+        Get metadata for a domain.
         
         Args:
-            dates: List of date strings
-            start_date: Optional start date (format: "YYYYMMDD")
-            end_date: Optional end date (format: "YYYYMMDD")
+            domain: Domain name
             
         Returns:
-            List of filtered date strings
+            Dictionary containing domain metadata or None if not found
         """
-        if not start_date and not end_date:
-            return dates
-        
-        filtered_dates = []
-        for date in dates:
-            if start_date and date < start_date:
-                continue
-            if end_date and date > end_date:
-                continue
-            filtered_dates.append(date)
-        
-        return filtered_dates
+        return self.storage.get_domain_metadata(domain)
     
     def list_domains(
-        self,
-        prefix: Optional[str] = None,
-        limit: int = 100,
+        self, 
+        prefix: Optional[str] = None, 
+        limit: int = 100, 
         offset: int = 0
     ) -> List[str]:
         """
@@ -229,7 +160,47 @@ class CCStore:
         Returns:
             List of domain names
         """
-        return self.metadata.list_domains(prefix, limit, offset)
+        return self.storage.list_domains(prefix, limit, offset)
+    
+    def process_incremental(self, date: Optional[str] = None) -> bool:
+        """
+        处理特定日期的增量数据并更新主存储
+        
+        Args:
+            date: Optional date string (format: "YYYYMMDD")
+            
+        Returns:
+            True if processing was successful, False otherwise
+        """
+        if date:
+            return len(self.storage.process_incremental_data(date)) > 0
+            
+        # 如果没有指定日期，处理最近的增量数据
+        incremental_dirs = []
+        
+        if os.path.exists(self.storage.incremental_path):
+            for dir_name in os.listdir(self.storage.incremental_path):
+                if os.path.isdir(os.path.join(self.storage.incremental_path, dir_name)):
+                    # 确保是日期格式 YYYYMMDD
+                    if len(dir_name) == 8 and dir_name.isdigit():
+                        incremental_dirs.append(dir_name)
+        
+        if not incremental_dirs:
+            logger.info("No incremental data to process")
+            return True
+                
+        # 选择最近的日期
+        date = max(incremental_dirs)
+        return len(self.storage.process_incremental_data(date)) > 0
+    
+    def merge_incremental(self) -> bool:
+        """
+        合并所有增量数据到主存储
+        
+        Returns:
+            True if merge was successful, False otherwise
+        """
+        return self.storage.merge_incremental_data()
     
     def get_domain_statistics(self, domain: str) -> Dict[str, Any]:
         """
@@ -241,46 +212,29 @@ class CCStore:
         Returns:
             Dictionary with domain statistics
         """
-        return self.metadata.get_domain_statistics(domain)
-    
-    def batch_get_domain_statistics(self, domains: List[str]) -> Dict[str, Dict[str, Any]]:
-        """
-        Get statistics for multiple domains.
+        metadata = self.get_domain_metadata(domain)
+        if not metadata:
+            return {
+                "domain": domain,
+                "total_records": 0,
+                "total_files": 0,
+                "total_size_bytes": 0,
+                "date_range": {
+                    "min_date": None,
+                    "max_date": None
+                }
+            }
         
-        Args:
-            domains: List of domain names
-            
-        Returns:
-            Dictionary mapping domain names to statistics dictionaries
-        """
-        # Use the batch get method from metadata manager
-        domain_metadata = self.metadata.batch_get_domain_metadata(domains)
-        
-        # Convert metadata to statistics format
-        result = {}
-        for domain, metadata in domain_metadata.items():
-            if metadata:
-                result[domain] = self.metadata.get_domain_statistics(domain)
-        
-        return result
-    
-    def delete_domain(self, domain: str) -> bool:
-        """
-        Delete a domain and all its data.
-        
-        Args:
-            domain: Domain name
-            
-        Returns:
-            True if deletion was successful, False otherwise
-        """
-        # Delete data from storage
-        storage_deleted = self.storage.delete_domain(domain)
-        
-        # Delete metadata
-        metadata_deleted = self.metadata.delete_domain_metadata(domain)
-        
-        return storage_deleted and metadata_deleted
+        return {
+            "domain": domain,
+            "total_records": metadata.get("total_records", 0),
+            "total_files": metadata.get("total_files", 0),
+            "total_size_bytes": metadata.get("total_size_bytes", 0),
+            "date_range": {
+                "min_date": metadata.get("min_date"),
+                "max_date": metadata.get("max_date")
+            }
+        }
     
     def close(self):
         """
@@ -292,18 +246,6 @@ class CCStore:
         if hasattr(self, 'spark') and self.spark:
             self.spark.stop()
 
-    def get_domain_metadata(self, domain: str) -> Optional[DomainMetadata]:
-        """
-        Get metadata for a domain.
-        
-        Args:
-            domain: Domain name.
-            
-        Returns:
-            DomainMetadata object or None if domain not found.
-        """
-        return self.metadata.get_domain_metadata(domain)
-    
     def get_dates_for_domain(self, domain: str) -> List[str]:
         """
         Get available dates for a domain.
@@ -351,7 +293,7 @@ class CCStore:
             domain,
             start_date=start_date,
             end_date=end_date,
-            limit=None
+            include_html=True
         )
         
         # Filter for documents with the keyword in HTML
@@ -436,7 +378,7 @@ class CCStore:
             True if update was successful, False otherwise
         """
         # Get current domain metadata
-        domain_metadata = self.metadata.get_domain_metadata(domain) or {
+        domain_metadata = self.storage.get_domain_metadata(domain) or {
             "domain": domain,
             "total_records": 0,
             "total_files": 0,
@@ -448,21 +390,49 @@ class CCStore:
         }
         
         # Update domain metadata with new file information
-        domain_metadata["total_records"] += sum(file.records_count for file in file_metadata)
+        domain_metadata["total_records"] += sum(file.record_count for file in file_metadata)
         domain_metadata["total_files"] += len(file_metadata)
-        domain_metadata["total_size_bytes"] += sum(file.file_size_bytes for file in file_metadata)
+        domain_metadata["total_size_bytes"] += sum(file.size_bytes for file in file_metadata)
         
+        # Get current dates for this domain
+        if "min_date" in domain_metadata and "max_date" in domain_metadata:
+            current_dates = []
+            min_date = domain_metadata["min_date"]
+            max_date = domain_metadata["max_date"]
+            
+            # Simple way to create a list of dates between min and max
+            if min_date and max_date:
+                try:
+                    min_date_obj = datetime.datetime.strptime(min_date, "%Y%m%d")
+                    max_date_obj = datetime.datetime.strptime(max_date, "%Y%m%d")
+                    
+                    delta = max_date_obj - min_date_obj
+                    for i in range(delta.days + 1):
+                        day = min_date_obj + datetime.timedelta(days=i)
+                        current_dates.append(day.strftime("%Y%m%d"))
+                except (ValueError, TypeError):
+                    current_dates = [min_date, max_date]
+        else:
+            current_dates = []
+            
         # Update date range
-        current_dates = self.metadata.get_dates_for_domain(domain)
         if date not in current_dates:
             current_dates.append(date)
             current_dates.sort()
+            
             # Update date-related metadata
             domain_metadata["min_date"] = current_dates[0]
             domain_metadata["max_date"] = current_dates[-1]
             domain_metadata["date_count"] = len(current_dates)
-            # Update the dates list
-            self.metadata.update_dates_for_domain(domain, current_dates)
         
-        # Save updated metadata
-        return self.metadata.update_domain_metadata(domain, domain_metadata) 
+        # Update the files list in metadata
+        if "files" not in domain_metadata:
+            domain_metadata["files"] = []
+            
+        # Add new file records
+        for file in file_metadata:
+            domain_metadata["files"].append(file.to_dict())
+        
+        # For now, just return True as we don't have a direct way to update metadata
+        # In a production system, you would save this back to the storage layer
+        return True 

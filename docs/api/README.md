@@ -15,7 +15,6 @@ CC-Store provides a simple and flexible API for storing and retrieving Common Cr
 Key features:
 - Domain-centric storage and retrieval
 - Date-based partitioning
-- Efficient HTML content storage
 - Advanced querying capabilities
 - Scalable with Spark
 
